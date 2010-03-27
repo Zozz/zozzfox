@@ -66,11 +66,14 @@ int FLT_ON_TEMP = 25;		// min temperature to run pool filter
 int FLT_START_HOUR = 14;	// when start pool filter
 int HEAT_ENABLED = 1;
 int SP_ENABLED = 1;
+
+// heating programs
 //0000 0000 0000 0000 0000 0000	program bits
 //0    4    8    12   16   20	hours
 unsigned int prog[]={
-	0x00FFFC /*0: 8-21*/,
-	0x03FFFC /*1: 6-21*/}; // heating programs
+	0x00FFFC /*0: 8-21 holiday*/,
+	0x03FFFC /*1: 6-21 workday*/,
+	0x00FFFF /*2: 8-23 party time*/};
 int days[7]={0,1,1,1,1,1,0}; // assign programs to days
 
 struct tm *ptm, utc;
@@ -237,7 +240,7 @@ static void parse_file (const char *filename)
     FILE *config_fp;
     char  buffer[MAX_LINE_LEN + 1];
     char *token;
-    int   line, i;
+    int   line;
 
     if ((config_fp = fopen (filename, "r")) == NULL) {
         printf ("Failed to open file \"%s\". Skipping ...\n", filename);
@@ -277,9 +280,6 @@ static void parse_file (const char *filename)
                 	FLT_START_HOUR = atoi(token);
                 else if(strcmp(name, "HEAT_ENABLED") == 0)
                 	HEAT_ENABLED = atoi(token);
-                else if(strcmp(name, "HEAT_Program") == 0)
-                	for(i=0; i<7; i++, token += 2)
-                		days[i] = atoi(token);
             }
             else {
                 printf ("Error in line %d: value expected\n", line);
@@ -288,6 +288,46 @@ static void parse_file (const char *filename)
 
         ++line;
     }
+}
+
+/*
+ * Set weekly heating program
+ */
+void heat_prog(void)
+{
+	int i, month, day, prg;
+	char buf[MAX_LINE_LEN + 1];
+
+    if((fc = fopen("exceptions.dat", "r")) == NULL){
+        printf ("Failed to open exceptions.dat\n");
+        return;
+    }
+	ptm->tm_mday -= ptm->tm_wday;	// back to Sunday
+	mktime(ptm);	// update month if needed
+	for(i = 0; i < 7; i++){
+		// normal program
+		if(i == 0 || i == 6)	// weekend
+			days[i] = 0;
+		else
+			days[i] = 1;
+		// handle exceptions
+		while(fgets(buf, sizeof(buf), fc) != NULL){	// no more exception
+			if(sscanf(buf, "%d-%d:%d", &month, &day, &prg) != 3)
+				continue;	// skip comments, wrong lines
+			if(ptm->tm_mon == month - 1){
+				if(ptm->tm_mday == day){
+					days[i] = prg;	// special date, overwrite program
+					break;
+				}
+			}
+		}
+		rewind(fc);
+		ptm->tm_mday++;	// next day
+		if(mktime(ptm) == -1)	// update month
+			puts("mktime error");
+	}
+	ptm = localtime(&t);	// restore time struct
+	fclose(fc);
 }
 
 int main(void)
@@ -315,7 +355,7 @@ int main(void)
 		printf("%d\n",T_flag);
 	}
 
-	printf("HomeControl V2.0 - Starting on %d/%d/%d (%d)\n", ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, T_flag);
+	printf("HomeControl V2.1 - Starting on %d/%d/%d (%d)\n", ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, T_flag);
 
 	T_flag = 0; // do not log T on startup
 	
@@ -327,6 +367,7 @@ int main(void)
 	if((fa = open(RS_PORT, O_RDWR)) < 0) die("open RS_PORT");
 	sp_last_t = t;
 	precip = WEXITSTATUS(system("/mnt/1/precip.sh"));
+	heat_prog();
 
 	// main loop
 	while(1){
@@ -347,7 +388,6 @@ int main(void)
 			    fprintf(fc,"   FLT_ON_TEMP = %d C\n", FLT_ON_TEMP);
 			    fprintf(fc,"FLT_START_HOUR = %d\n", FLT_START_HOUR);
 			    fprintf(fc,"  HEAT_ENABLED = %d\n", HEAT_ENABLED);
-			    fprintf(fc,"  HEAT_Program = %d,%d,%d,%d,%d,%d,%d\n",days[0],days[1],days[2],days[3],days[4],days[5],days[6]);
 				fclose(fc);
 			}
 		}
@@ -359,10 +399,11 @@ int main(void)
 		t = time(NULL);
 		ptm = localtime(&t);
 
-		/* update system time on every Sunday */
+		/* on every Sunday */
 		if(ptm->tm_wday == 0){
 			if(time_flag){
-				system("/mnt/1/gettime.sh");
+				heat_prog();
+				system("/mnt/1/gettime.sh");	// update system time
 				time_flag = 0;
 			}
 		}
@@ -393,7 +434,7 @@ int main(void)
 				Tmin = Tmax = temp;	// reset Tmin, Tmax
 			}
 			break;
-		case 6:		// 6 UTC: reset for sprinkling
+		case 6:		// 6 UTC: reset for watering
 			if(T_flag){ // do it only once
 				T_flag = 0;
 				Tmax1 = temp;	// reset Tmax1
@@ -441,14 +482,15 @@ int main(void)
 	    }
 	    else{
 			ptm = localtime(&sp_last_t);
-	    	fprintf(fc,"sp_last_t = %d/%d\n",ptm->tm_mon+1,ptm->tm_mday);
-	    	fprintf(fc,"  sp_freq = %d day%c\n",sp_freq, sp_freq > 1 ? 's' : ' ');
-	    	fprintf(fc,"  ht_corr = %d min\n",ht_corr);
-	    	fprintf(fc,"     Temp = %3.1f\n",temp);
-	    	fprintf(fc,"     Tmin = %3.1f\n",Tmin);
-	    	fprintf(fc,"     Tmax = %3.1f\n",Tmax);
-	    	fprintf(fc,"    Tmax1 = %3.1f\n",Tmax1);
-	    	fprintf(fc,"Est. prec = %d mm\n",precip);
+	    	fprintf(fc,"Last watering = %d/%d\n",ptm->tm_mon+1,ptm->tm_mday);
+	    	fprintf(fc,"Watering freq = %d day%c\n",sp_freq, sp_freq > 1 ? 's' : ' ');
+	    	fprintf(fc," Heating corr = %d min\n",ht_corr);
+	    	fprintf(fc,"  Temperature = %3.1f\n",temp);
+	    	fprintf(fc,"         Tmin = %3.1f\n",Tmin);
+	    	fprintf(fc,"         Tmax = %3.1f\n",Tmax);
+	    	fprintf(fc,"        Tmax1 = %3.1f\n",Tmax1);
+	    	fprintf(fc,"  Est. precip = %d mm\n",precip);
+		    fprintf(fc,"Heat. program = %d,%d,%d,%d,%d,%d,%d\n",days[0],days[1],days[2],days[3],days[4],days[5],days[6]);
 	    	fclose(fc);
 	    }
 
