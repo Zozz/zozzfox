@@ -1,4 +1,3 @@
-/* -*- Mode: C; indent-tabs-mode: t; c-basic-offset: 4; tab-width: 4 -*- */
 /*
  * homectrl.c
  * Copyright (C) Kovács Zoltán 2008-2009 <zozz@freemail.hu>
@@ -10,7 +9,7 @@
  * Foundation; either version 2 of the License, or (at your option)
  * any later version.
  * 
- * main.c is distributed in the hope that it will be useful,
+ * homectrl.c is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
  * See the GNU General Public License for more details.
@@ -42,9 +41,6 @@
 #define CH1_OFF_BIT	1<<1
 #define CH2_ON_BIT	1<<3
 #define CH2_OFF_BIT	1<<5
-// rain sensor port A1
-#define RS_PORT		"/dev/gpioa"
-#define RS_BIT		1<<1
 
 #define ST_START	0
 #define ST_ON		1
@@ -62,7 +58,7 @@ int SP_ON_TIME = 30 MIN;	// sprinkler on cycle time
 int SP_OFF_TIME = 20 MIN;	// pause between sprinkler cycles
 int SP_START_HOUR = 19;		// when start sprinkling
 int FLT_ON_TIME = 120 MIN;	// how long run pool filter
-int FLT_ON_TEMP = 25;		// min temperature to run pool filter
+int FLT_ON_TEMP = 30;		// min temperature to run pool filter
 int FLT_START_HOUR = 14;	// when start pool filter
 int HEAT_ENABLED = 1;
 int SP_ENABLED = 1;
@@ -80,8 +76,26 @@ struct tm *ptm, utc;
 time_t t, sp_last_t;
 int fd, fa, sp_st=ST_IDLE, sp_round=1, flt_st=ST_IDLE, ht_corr = 0, sp_freq, precip;
 FILE *fc;
-float Tmin = 50.0, Tmax = -50.0, Tmax1 = -50.0, temp;
+float Tmin = 50.0, Tmax = -50.0, Tmax1 = -50.0, precLast;
 char *wdays[]={"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+
+/* WMRS data structures - must be same as in wmrs200log.c! */
+struct sensor_t{
+	float temp;
+	int rh;
+	char sBatt;
+};
+struct wmrs_t{
+	struct sensor_t s[2];
+	int relP;
+	int absP;
+	float wind;
+	float gust;
+	int windDir;
+	char wBatt;
+	float prec, prec1, prec24, precTot;
+	char pBatt;
+} *wmrs;
 
 /* generate on/off pulse for remote controller */
 static void pulse(int bit)
@@ -95,19 +109,12 @@ static void pulse(int bit)
 /* get external temperature */
 static void get_temp(void)
 {
-	int tmp;
-    tmp = system("/mnt/1/temp.sh");
-    if(tmp == -1 || WEXITSTATUS(tmp)) return; // error
+	float temp;
 
-    if ((fc = fopen ("/var/tmp/temp.val", "r")) == NULL) {
-        printf ("Failed to open temp.val\n");
-        return;
-    }
-	fscanf(fc, "%f", &temp); // get the script return value
-	fclose(fc);
-	if(temp > Tmax) Tmax = temp; // save max temp
-	if(temp > Tmax1) Tmax1 = temp; // save max temp for sprinkling
-	if(temp < Tmin) Tmin = temp; // save min temp
+	temp = wmrs->s[1].temp;
+	if(temp > Tmax) Tmax = temp; 	// save max temp
+	if(temp > Tmax1) Tmax1 = temp; 	// save max temp for watering
+	if(temp < Tmin) Tmin = temp;	// save min temp
 }
 
 /* read rain sensor state */
@@ -115,7 +122,8 @@ static int rain_sensor(void)
 {
 	int value;
 	static int prev_value = -1;
-	value = !(ioctl(fa, _IO(ETRAXGPIO_IOCTYPE, IO_READBITS)) & RS_BIT);
+
+	value = wmrs->prec24 > 5;
 	if(value != prev_value){
 		printf("%s %02d:%02d Rain sensor %s\n", wdays[ptm->tm_wday], ptm->tm_hour, ptm->tm_min, value ? "on" : "off");
 		prev_value = value;
@@ -127,6 +135,7 @@ static int rain_sensor(void)
 static void heat(int state)
 {
 	static int heat_status = -1;
+
 	if(state == heat_status) return;
 	printf("%s %02d:%02d Heating %s\n", wdays[ptm->tm_wday], ptm->tm_hour, ptm->tm_min, state ? "on" : "off");
 	if(state)
@@ -155,7 +164,7 @@ static void sprinkler(void)
 		/* check time to start */
 		if(difftime(t, sp_last_t) >= sp_freq*60*60*24 && ptm->tm_hour == SP_START_HOUR){
 	    	saved_day = ptm->tm_wday;
-		    precip = WEXITSTATUS(system("/mnt/1/precip.sh")); // first check precip
+		    precip = WEXITSTATUS(system("/mnt/1/precip.sh")); // first check precip forecast
 		    if(precip > 5){
 				sp_st = ST_SKIP;
 			}
@@ -217,10 +226,10 @@ static void filter(void)
 static void corrections(void)
 {
 	// correct heating time: lower temperature -> earlier ON time
-	ht_corr = -3 * temp + 15;
+	ht_corr = -3 * wmrs->s[1].temp + 15;
 	if(ht_corr < 0) ht_corr = 0;
 
-	// correct sprinkling frequency: higher temperature -> frequent sprinkling
+	// correct sprinkling frequency: higher temperature -> frequent watering
 	sp_freq = -0.4 * Tmax1 + 13.0 + 0.5; // 20C -> 5 day, 30C -> 1 day, rounded
 	if(sp_freq < 0) sp_freq = 0;
 
@@ -293,12 +302,12 @@ static void parse_file (const char *filename)
 /*
  * Set weekly heating program
  */
-void heat_prog(void)
+static void heat_prog(void)
 {
 	int i, month, day, prg;
 	char buf[MAX_LINE_LEN + 1];
 
-    if((fc = fopen("exceptions.dat", "r")) == NULL){
+    if((fc = fopen("/mnt/1/exceptions.dat", "r")) == NULL){
         printf ("Failed to open exceptions.dat\n");
         return;
     }
@@ -332,11 +341,10 @@ void heat_prog(void)
 
 int main(void)
 {
-	time_t last_get_temp = 0, last_check_cnf = 0;
+	time_t last_check_cnf = 0;
 	struct stat cfst;
-	int T_flag, time_flag = 0, p_flag = 1, n=0;
+	int T_flag, time_flag = 0, p_flag = 1;
 	int shmid;
-	char *shm;
 	
 	setlinebuf(stdout); // for correct logging to file
 	t = time(NULL);
@@ -355,18 +363,18 @@ int main(void)
 		printf("%d\n",T_flag);
 	}
 
-	printf("HomeControl V2.1 - Starting on %d/%d/%d (%d)\n", ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, T_flag);
+	printf("HomeControl V2.2 - Starting on %d/%d/%d (%d)\n", ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, T_flag);
 
 	T_flag = 0; // do not log T on startup
 	
-	/* create shared memory for Web communication */
-	if((shmid = shmget(1962, 200, IPC_CREAT | 0666)) < 0) die("shmget");
-	if((shm = shmat(shmid, NULL, 0)) == (char *) -1) die("shmat");
+	/* create shared memory for WMRS communication */
+	if((shmid = shmget(1962, sizeof(struct wmrs_t), IPC_CREAT | 0666)) < 0) die("shmget");
+	if((wmrs = shmat(shmid, NULL, SHM_RDONLY)) == (void *)-1) die("shmat");
 
 	if((fd = open(CTRL_PORT, O_RDWR)) < 0) die("open CTRL_PORT");
-	if((fa = open(RS_PORT, O_RDWR)) < 0) die("open RS_PORT");
 	sp_last_t = t;
 	precip = WEXITSTATUS(system("/mnt/1/precip.sh"));
+	precLast = wmrs->precTot;	// reset daily precip
 	heat_prog();
 
 	// main loop
@@ -410,41 +418,39 @@ int main(void)
 		else
 			time_flag = 1;
 
-		/* get temperature every 15 minutes */
-		if(difftime(t, last_get_temp) >= 15 MIN){
-			get_temp();
-			last_get_temp = t;
-		}
+		get_temp();
 
 		corrections(); // must do before reset Tmax!
 
 		/* Log and reset Tmin, Tmax */
 		gmtime_r(&t, &utc);
 		switch(utc.tm_hour){
-		case 18:	// 18 UTC: reset for log
+		case 18:	// 18 UTC: log daily temperatures
 			if(T_flag){ // do it only once
 				T_flag = 0;
-				if((fc = fopen("/var/T.dat", "a")) == NULL){
-			    	printf("Open error on data file\n");
-			    }
-			    else{
-			    	fprintf(fc, "%d/%d:\tTmin=%3.1f\tTmax=%3.1f\n", ptm->tm_mon+1, ptm->tm_mday, Tmin, Tmax);
+				if((fc = fopen("/var/T.dat", "a")) != NULL){
+			    	fprintf(fc, "%02d/%02d: Tmin=%-4.1f Tmax=%-4.1f", ptm->tm_mon+1, ptm->tm_mday, Tmin, Tmax);
 			    	fclose(fc);
 			    }
-				Tmin = Tmax = temp;	// reset Tmin, Tmax
+				Tmin = Tmax = wmrs->s[1].temp;	// reset Tmin, Tmax
 			}
 			break;
-		case 6:		// 6 UTC: reset for watering
+		case 6:		// 6 UTC: log daily precip
 			if(T_flag){ // do it only once
 				T_flag = 0;
-				Tmax1 = temp;	// reset Tmax1
+				if((fc = fopen("/var/T.dat", "a")) != NULL){
+			    	fprintf(fc, " Prec=%3.1f\n", wmrs->precTot - precLast);
+			    	fclose(fc);
+			    }
+				precLast = wmrs->precTot;	// reset daily precip
+				Tmax1 = wmrs->s[1].temp;	// reset Tmax1 (for watering)
 			}
 			break;
 		default:
 			T_flag = 1;
 		}
 
-		/* get precipitation for next day */
+		/* get precipitation forecast for next day */
 		switch(ptm->tm_hour){
 		case 6:
 			if(p_flag){ // do it only once
@@ -485,17 +491,17 @@ int main(void)
 	    	fprintf(fc,"Last watering = %d/%d\n",ptm->tm_mon+1,ptm->tm_mday);
 	    	fprintf(fc,"Watering freq = %d day%c\n",sp_freq, sp_freq > 1 ? 's' : ' ');
 	    	fprintf(fc," Heating corr = %d min\n",ht_corr);
-	    	fprintf(fc,"  Temperature = %3.1f\n",temp);
 	    	fprintf(fc,"         Tmin = %3.1f\n",Tmin);
 	    	fprintf(fc,"         Tmax = %3.1f\n",Tmax);
 	    	fprintf(fc,"        Tmax1 = %3.1f\n",Tmax1);
 	    	fprintf(fc,"  Est. precip = %d mm\n",precip);
-		    fprintf(fc,"Heat. program = %d,%d,%d,%d,%d,%d,%d\n",days[0],days[1],days[2],days[3],days[4],days[5],days[6]);
+		    fprintf(fc,"Heat. program = %d,%d,%d,%d,%d,%d,%d\n", days[0], days[1], days[2], days[3],
+		    		days[4], days[5], days[6]);
 	    	fclose(fc);
 	    }
 
 		/* send all data to the web server in JSON format*/
-		sprintf(shm, "{\"id\":%d, \"sp\":%d, \"sp_st\":%d, \"temp\":%3.1f}", ++n, sp_round, sp_st, temp);
+//		sprintf(shm, "{\"id\":%d, \"sp\":%d, \"sp_st\":%d, \"temp\":%3.1f}", ++n, sp_round, sp_st, temp);
 
 		sleep(30);
 	}
@@ -503,4 +509,4 @@ int main(void)
 	printf("Exiting...\n");
 	return (0);
 }
-
+/* SDG */
