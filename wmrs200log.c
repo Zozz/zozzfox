@@ -37,6 +37,7 @@
 #include <linux/usbdevice_fs.h>
 #include <sys/ioctl.h>
 #include <sys/shm.h>
+#include <syslog.h>
 
 #define ever ;;
 #define FOXBOARD
@@ -50,11 +51,11 @@
 int fd;
 FILE *fp;
 char disp[8][50];
-char *winddir[] =
-		{"N","NNE","NE","ENE", "E", "SEE", "SE", "SSE", "S", "SSW", "SW", "SWW", "W", "NWW", "NW", "NNW"};
+char *winddir[] = {"N","NNE","NE","ENE", "E", "SEE", "SE", "SSE", "S", "SSW", "SW", "SWW", "W", "NWW", "NW", "NNW"};
 struct sensor_t{
 	float temp;
 	int rh;
+	float dew;
 	char sBatt;
 };
 struct wmrs_t{
@@ -114,9 +115,10 @@ void processRecord(unsigned char *rec)
 		int sensor = rec[2] & 0x0F;
 		w->s[sensor].temp = (rec[4]*255+rec[3]) / 10.0;
 		w->s[sensor].rh = rec[5];
+		w->s[sensor].dew = (rec[7]*255+rec[6]) / 10.0;
 		w->s[sensor].sBatt = (flags >> 6) & 1;
-		sprintf((char *)&disp[2+sensor],"*Sensor%d T: %3.1f Rh: %d%% Batt: %d", sensor, w->s[sensor].temp,
-				w->s[sensor].rh, w->s[sensor].sBatt);
+		sprintf((char *)&disp[2+sensor],"*Sensor%d T: %3.1f Rh: %d%% Dew: %3.1f Batt: %d", sensor, w->s[sensor].temp,
+				w->s[sensor].rh, w->s[sensor].dew, w->s[sensor].sBatt);
 		break;
 		}
 	case 0x46:	// pressure
@@ -164,12 +166,15 @@ void processRecord(unsigned char *rec)
 	}
 }
 
-int main(int argc, char **argv)
+int main(int argc, char *argv[])
 {
 	struct usbdevfs_bulktransfer bt;
 	struct usbdevfs_ctrltransfer ct;
     unsigned char buf[10], usbRecords[100];
     int j, usbRecordLength, shmid;
+
+    openlog(argv[0], 0, 0);
+    syslog(LOG_INFO, "starting");
 
 	fp = fopen("/var/w.dat", "w");
 
@@ -177,19 +182,27 @@ int main(int argc, char **argv)
     	fd = open("/proc/bus/usb/001/002", O_RDWR);
     else
     	fd = open(argv[1], O_RDWR);
+
 	if(fd < 0){
-		fprintf(fp, "error opening device\n");
+		syslog(LOG_ERR, "open: %m");
 		fclose(fp);
 		exit(EXIT_FAILURE);
 	}
 
 	/* create shared memory for WMRS communication */
-	if((shmid = shmget(1962, sizeof(struct wmrs_t), IPC_CREAT | 0666)) < 0) exit(EXIT_FAILURE);
-	if((w = shmat(shmid, NULL, 0)) == (void *)-1) exit(EXIT_FAILURE);
+	if((shmid = shmget(1962, sizeof(struct wmrs_t), IPC_CREAT | 0666)) < 0){
+		syslog(LOG_ERR, "shmget: %m");
+		exit(EXIT_FAILURE);
+	}
+	if((w = shmat(shmid, NULL, 0)) == (void *)-1){
+		syslog(LOG_ERR, "shmat: %m");
+		exit(EXIT_FAILURE);
+	}
 
 	signal(SIGTERM, cleanup);
 
-	ioctl(fd, USBDEVFS_CLAIMINTERFACE, 0);	// Claim interface 0
+	// Claim interface 0
+	if(ioctl(fd, USBDEVFS_CLAIMINTERFACE, 0) < 0) syslog(LOG_ERR, "ioctl: %m");
 
 	ct.bRequestType = (0x01 << 5)+1;	// USB_TYPE_CLASS + USB_RECIP_INTERFACE
 	ct.bRequest = 9;

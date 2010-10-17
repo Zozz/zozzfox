@@ -83,6 +83,7 @@ char *wdays[]={"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
 struct sensor_t{
 	float temp;
 	int rh;
+	float dew;
 	char sBatt;
 };
 struct wmrs_t{
@@ -176,14 +177,14 @@ static void sprinkler(void)
 		}
 		break;
 	case ST_START: // start cycle
-		printf("%s %02d:%02d Sprinkler%d on\n", wdays[ptm->tm_wday], ptm->tm_hour, ptm->tm_min, sp_round);
+		printf("%s %02d:%02d Sprinkler%d on", wdays[ptm->tm_wday], ptm->tm_hour, ptm->tm_min, sp_round);
 		pulse(CH2_ON_BIT);
 		sp_st = ST_ON;
 		if(sp_round == 1) sp_last_t = t; // save last sprinkling time
 		break;
 	case ST_ON: // wait for sprinkler time
 		if(difftime(t, saved_t) >= SP_ON_TIME){
-			printf("%s %02d:%02d Sprinkler%d off\n", wdays[ptm->tm_wday], ptm->tm_hour, ptm->tm_min, sp_round);
+			printf(", %02d:%02d off\n", ptm->tm_hour, ptm->tm_min);
 			pulse(CH2_OFF_BIT);
 			sp_st = ST_OFF;
 			saved_t += SP_ON_TIME;
@@ -274,13 +275,6 @@ static void parse_file (const char *filename)
                 	SP_OFF_TIME = atoi(token) * 60;
                 else if(strcmp(name, "SP_START_HOUR") == 0)
                 	SP_START_HOUR = atoi(token);
-                else if(strcmp(name, "sp_last_t") == 0){
-                	memset(&utc, 0, sizeof(utc));
-                	sscanf(token, "%d/%d", &utc.tm_mon, &utc.tm_mday);
-                	utc.tm_mon--;
-                	utc.tm_year = ptm->tm_year;
-                	sp_last_t = mktime(&utc);
-				}
                 else if(strcmp(name, "FLT_ON_TIME") == 0)
                 	FLT_ON_TIME = atoi(token) * 60;
                 else if(strcmp(name, "FLT_ON_TEMP") == 0)
@@ -390,8 +384,6 @@ int main(void)
 			    fprintf(fc,"    SP_ON_TIME = %d min\n", SP_ON_TIME/60);
 			    fprintf(fc,"   SP_OFF_TIME = %d min\n", SP_OFF_TIME/60);
 			    fprintf(fc," SP_START_HOUR = %d\n", SP_START_HOUR);
-				ptm = localtime(&sp_last_t);
-		    	fprintf(fc,"     sp_last_t = %d/%d\n", ptm->tm_mon+1, ptm->tm_mday);
 			    fprintf(fc,"   FLT_ON_TIME = %d min\n", FLT_ON_TIME/60);
 			    fprintf(fc,"   FLT_ON_TEMP = %d C\n", FLT_ON_TEMP);
 			    fprintf(fc,"FLT_START_HOUR = %d\n", FLT_START_HOUR);
@@ -429,7 +421,7 @@ int main(void)
 			if(T_flag){ // do it only once
 				T_flag = 0;
 				if((fc = fopen("/var/T.dat", "a")) != NULL){
-			    	fprintf(fc, "%02d/%02d: Tmin=%-4.1f Tmax=%-4.1f", ptm->tm_mon+1, ptm->tm_mday, Tmin, Tmax);
+			    	fprintf(fc, "%02d/%02d: Tmin=%-5.1f Tmax=%-5.1f", ptm->tm_mon+1, ptm->tm_mday, Tmin, Tmax);
 			    	fclose(fc);
 			    }
 				Tmin = Tmax = wmrs->s[1].temp;	// reset Tmin, Tmax
@@ -488,7 +480,7 @@ int main(void)
 	    }
 	    else{
 			ptm = localtime(&sp_last_t);
-	    	fprintf(fc,"Last watering = %d/%d\n",ptm->tm_mon+1,ptm->tm_mday);
+	    	fprintf(fc,"Prec/watering = %d/%d\n",ptm->tm_mon+1,ptm->tm_mday);
 	    	fprintf(fc,"Watering freq = %d day%c\n",sp_freq, sp_freq > 1 ? 's' : ' ');
 	    	fprintf(fc," Heating corr = %d min\n",ht_corr);
 	    	fprintf(fc,"         Tmin = %3.1f\n",Tmin);
