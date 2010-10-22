@@ -69,7 +69,8 @@ int SP_ENABLED = 1;
 unsigned int prog[]={
 	0x00FFFC /*0: 8-21 holiday*/,
 	0x03FFFC /*1: 6-21 workday*/,
-	0x00FFFF /*2: 8-23 party time*/};
+	0x00FFFF /*2: 8-23 party time*/,
+    0x00FFFF /*3: 5-21 early get up*/};
 int days[7]={0,1,1,1,1,1,0}; // assign programs to days
 
 struct tm *ptm, utc;
@@ -315,14 +316,16 @@ static void heat_prog(void)
 			days[i] = 1;
 		// handle exceptions
 		while(fgets(buf, sizeof(buf), fc) != NULL){	// no more exception
-			if(sscanf(buf, "%d-%d:%d", &month, &day, &prg) != 3)
-				continue;	// skip comments, wrong lines
-			if(ptm->tm_mon == month - 1){
-				if(ptm->tm_mday == day){
+			if(sscanf(buf, "%d-%d:%d", &month, &day, &prg) == 3)
+				if((ptm->tm_mon == (month - 1)) && (ptm->tm_mday == day)){
 					days[i] = prg;	// special date, overwrite program
 					break;
 				}
-			}
+			else if(sscanf(buf, "%d:%d", &day, &prg) == 2)
+				if(ptm->tm_wday == day){
+					days[i] = prg;	// special day, overwrite program
+					break;
+				}
 		}
 		rewind(fc);
 		ptm->tm_mday++;	// next day
