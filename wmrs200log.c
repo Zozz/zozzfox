@@ -113,9 +113,9 @@ void processRecord(unsigned char *rec)
 			break;	// checksum error
 
 		int sensor = rec[2] & 0x0F;
-		w->s[sensor].temp = (rec[4]*255+rec[3]) / 10.0;
+		w->s[sensor].temp = (short)(rec[4]*256+rec[3]) / 10.0;
 		w->s[sensor].rh = rec[5];
-		w->s[sensor].dew = (rec[7]*255+rec[6]) / 10.0;
+		w->s[sensor].dew = (short)(rec[7]*256+rec[6]) / 10.0;
 		w->s[sensor].sBatt = (flags >> 6) & 1;
 		sprintf((char *)&disp[2+sensor],"*Sensor%d T: %3.1f Rh: %d%% Dew: %3.1f Batt: %d", sensor, w->s[sensor].temp,
 				w->s[sensor].rh, w->s[sensor].dew, w->s[sensor].sBatt);
