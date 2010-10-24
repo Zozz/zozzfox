@@ -204,11 +204,11 @@ int main(int argc, char *argv[])
 	// Claim interface 0
 	if(ioctl(fd, USBDEVFS_CLAIMINTERFACE, 0) < 0) syslog(LOG_ERR, "ioctl: %m");
 
-	ct.bRequestType = (0x01 << 5)+1;	// USB_TYPE_CLASS + USB_RECIP_INTERFACE
-	ct.bRequest = 9;
-	ct.wValue = 0x200;
-	ct.wIndex = 0;
-	ct.wLength = 8;
+	ct.requesttype = (0x01 << 5)+1;	// USB_TYPE_CLASS + USB_RECIP_INTERFACE
+	ct.request = 9;
+	ct.value = 0x200;
+	ct.index = 0;
+	ct.length = 8;
 	ct.timeout = 1000;
 	ct.data = buf;
 	memcpy(buf, "\x20\x00\x08\x01\x00\x00\x00\x00", 8);
