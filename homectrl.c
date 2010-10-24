@@ -316,16 +316,18 @@ static void heat_prog(void)
 			days[i] = 1;
 		// handle exceptions
 		while(fgets(buf, sizeof(buf), fc) != NULL){	// no more exception
-			if(sscanf(buf, "%d-%d:%d", &month, &day, &prg) == 3)
+			if(sscanf(buf, "%d-%d:%d", &month, &day, &prg) == 3){
 				if((ptm->tm_mon == (month - 1)) && (ptm->tm_mday == day)){
 					days[i] = prg;	// special date, overwrite program
 					break;
 				}
-			else if(sscanf(buf, "%d:%d", &day, &prg) == 2)
+			}
+			else if(sscanf(buf, "%d:%d", &day, &prg) == 2){
 				if(ptm->tm_wday == day){
 					days[i] = prg;	// special day, overwrite program
 					break;
 				}
+			}
 		}
 		rewind(fc);
 		ptm->tm_mday++;	// next day
