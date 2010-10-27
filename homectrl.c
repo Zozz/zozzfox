@@ -36,6 +36,7 @@
 #define ON			1
 #define OFF			0
 #define CONFIG_FILE "/var/homectrl.cnf"
+#define EXCEPT_FILE "/mnt/1/exceptions.dat"
 #define CTRL_PORT	"/dev/gpiog"
 #define CH1_ON_BIT	1<<4
 #define CH1_OFF_BIT	1<<1
@@ -70,7 +71,7 @@ unsigned int prog[]={
 	0x00FFFC /*0: 8-21 holiday*/,
 	0x03FFFC /*1: 6-21 workday*/,
 	0x00FFFF /*2: 8-23 party time*/,
-    0x00FFFF /*3: 5-21 early get up*/};
+    0x07FFFC /*3: 5-21 early get up*/};
 int days[7]={0,1,1,1,1,1,0}; // assign programs to days
 
 struct tm *ptm, utc;
@@ -302,7 +303,7 @@ static void heat_prog(void)
 	int i, month, day, prg;
 	char buf[MAX_LINE_LEN + 1];
 
-    if((fc = fopen("/mnt/1/exceptions.dat", "r")) == NULL){
+    if((fc = fopen(EXCEPT_FILE, "r")) == NULL){
         printf ("Failed to open exceptions.dat\n");
         return;
     }
@@ -340,7 +341,7 @@ static void heat_prog(void)
 
 int main(void)
 {
-	time_t last_check_cnf = 0;
+	time_t last_check_cnf = 0, last_check_exc = 0;
 	struct stat cfst;
 	int T_flag, time_flag = 0, p_flag = 1;
 	int shmid;
@@ -362,7 +363,7 @@ int main(void)
 		printf("%d\n",T_flag);
 	}
 
-	printf("HomeControl V2.2 - Starting on %d/%d/%d (%d)\n", ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, T_flag);
+	printf("HomeControl V2.3 - Starting on %d/%d/%d (%d)\n", ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, T_flag);
 
 	T_flag = 0; // do not log T on startup
 	
@@ -374,7 +375,6 @@ int main(void)
 	sp_last_t = t;
 	precip = WEXITSTATUS(system("/mnt/1/precip.sh"));
 	precLast = wmrs->precTot;	// reset daily precip
-	heat_prog();
 
 	// main loop
 	while(1){
@@ -404,10 +404,17 @@ int main(void)
 		t = time(NULL);
 		ptm = localtime(&t);
 
+		/* check if exceptions file modified */
+		if(stat(EXCEPT_FILE, &cfst) == 0){
+			if(cfst.st_mtime > last_check_exc){
+				heat_prog();
+				last_check_exc = cfst.st_mtime;
+			}
+		}
+
 		/* on every Sunday */
 		if(ptm->tm_wday == 0){
 			if(time_flag){
-				heat_prog();
 				system("/mnt/1/gettime.sh");	// update system time
 				time_flag = 0;
 			}
