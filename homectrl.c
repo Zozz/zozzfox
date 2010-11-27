@@ -416,6 +416,7 @@ int main(void)
 		if(ptm->tm_wday == 0){
 			if(time_flag){
 				system("/mnt/1/gettime.sh");	// update system time
+				heat_prog();	// update next week program
 				time_flag = 0;
 			}
 		}
