@@ -14,27 +14,14 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <syslog.h>
+#include <signal.h>
+#include <netdb.h>
+
+#include "wmrs200log.h"
 
 #define STRLEN_MSG 1018	// length of whole message
 
-/* WMRS data structures - must be same as in wmrs200log.c! */
-struct sensor_t{
-	float temp;
-	int rh;
-	float dew;
-	char sBatt;
-};
-struct wmrs_t{
-	struct sensor_t s[2];
-	int relP;
-	int absP;
-	float wind;
-	float gust;
-	int windDir;
-	char wBatt;
-	float prec, prec1, prec24, precTot;
-	char pBatt;
-} *w;
+static wmrs_t *w;
 static char dt[20], key[33];
 static char msg[1023] =
 		"POST /code/api/obs_auto.php HTTP/1.1\r\n"
@@ -62,6 +49,13 @@ static void strupr(char *s)
 	return;
 }
 
+// free resources on exit
+static void cleanup(int dummy)
+{
+	shmdt(w);
+    exit(EXIT_SUCCESS);
+}
+
 int main(int argc, char *argv[])
 {
 	const int hlen = strlen(msg);	// length of static part
@@ -70,14 +64,25 @@ int main(int argc, char *argv[])
     time_t t;
     struct tm *tmp;
     struct sockaddr_in saddr;
+    struct hostent *host;
     char keygen[] = "echo -n 'ZWMRSCE323B11B2E18FC9C1DB1DA870BACAA82010-05-29 21:14:10' | md5sum >/var/key"; //sector
     char * const dtpos = strstr(keygen, "2010-");	// position of date/time
 
     openlog(argv[0], 0, 0);
     syslog(LOG_INFO, "starting");
 
+	/* read the station identifier */
+	if((fc = fopen("/mnt/1/statid", "r")) != NULL){
+		fgets(&keygen[9], 38, fc);
+		fclose(fc);
+	}
+	else{
+		syslog(LOG_ERR, "statid: %m");
+		exit(EXIT_FAILURE);
+	}
+
 	/* create shared memory for WMRS communication */
-	if((shmid = shmget(1962, sizeof(struct wmrs_t), IPC_CREAT | 0666)) < 0){
+	if((shmid = shmget(1962, sizeof(wmrs_t), IPC_CREAT | 0666)) < 0){
 		syslog(LOG_ERR, "shmget: %m");
 		exit(EXIT_FAILURE);
 	}
@@ -85,6 +90,8 @@ int main(int argc, char *argv[])
 		syslog(LOG_ERR, "shmat: %m");
 		exit(EXIT_FAILURE);
 	}
+
+	signal(SIGTERM, cleanup);
 
 	for(; ; sleep(600)){
 		/* connect to metnet.hu */
@@ -95,7 +102,15 @@ int main(int argc, char *argv[])
 		memset(&saddr, 0, sizeof(saddr));	// clear struct
 		saddr.sin_family = AF_INET;
 		saddr.sin_port = htons(80);
-		inet_aton("87.229.96.7", &saddr.sin_addr);
+		host = gethostbyname("metnet.hu");
+		if(host != NULL){
+			char *s, *d;
+			s = host->h_addr_list[0];
+			d = (char *)&saddr.sin_addr;
+			for(pos = 0; pos < sizeof(saddr.sin_addr); pos++){
+				*d++ = *s++;
+			}
+		}
 		if(connect(sd, (struct sockaddr *)&saddr, sizeof(saddr)) < 0){
 			syslog(LOG_ERR, "connect: %m");
 			close(sd);
@@ -141,6 +156,5 @@ int main(int argc, char *argv[])
 		}
 		close(sd);
 	}
-    exit(EXIT_SUCCESS);
 }
 /* SDG */

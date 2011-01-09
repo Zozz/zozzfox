@@ -33,6 +33,8 @@
 #include <sys/stat.h>
 #include <sys/shm.h>
 
+#include "wmrs200log.h"
+
 #define ON			1
 #define OFF			0
 #define CONFIG_FILE "/var/homectrl.cnf"
@@ -80,25 +82,7 @@ int fd, fa, sp_st=ST_IDLE, sp_round=1, flt_st=ST_IDLE, ht_corr = 0, sp_freq, pre
 FILE *fc;
 float Tmin = 50.0, Tmax = -50.0, Tmax1 = -50.0, precLast;
 char *wdays[]={"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
-
-/* WMRS data structures - must be same as in wmrs200log.c! */
-struct sensor_t{
-	float temp;
-	int rh;
-	float dew;
-	char sBatt;
-};
-struct wmrs_t{
-	struct sensor_t s[2];
-	int relP;
-	int absP;
-	float wind;
-	float gust;
-	int windDir;
-	char wBatt;
-	float prec, prec1, prec24, precTot;
-	char pBatt;
-} *wmrs;
+wmrs_t *wmrs;
 
 /* generate on/off pulse for remote controller */
 static void pulse(int bit)
@@ -339,6 +323,14 @@ static void heat_prog(void)
 	fclose(fc);
 }
 
+// free resources on exit
+static void cleanup(int dummy)
+{
+	close(fd);
+	shmdt(wmrs);
+    exit(EXIT_SUCCESS);
+}
+
 int main(void)
 {
 	time_t last_check_cnf = 0, last_check_exc = 0;
@@ -368,7 +360,7 @@ int main(void)
 	T_flag = 0; // do not log T on startup
 	
 	/* create shared memory for WMRS communication */
-	if((shmid = shmget(1962, sizeof(struct wmrs_t), IPC_CREAT | 0666)) < 0) die("shmget");
+	if((shmid = shmget(1962, sizeof(wmrs_t), IPC_CREAT | 0666)) < 0) die("shmget");
 	if((wmrs = shmat(shmid, NULL, SHM_RDONLY)) == (void *)-1) die("shmat");
 
 	if((fd = open(CTRL_PORT, O_RDWR)) < 0) die("open CTRL_PORT");
@@ -376,8 +368,10 @@ int main(void)
 	precip = WEXITSTATUS(system("/mnt/1/precip.sh"));
 	precLast = wmrs->precTot;	// reset daily precip
 
+	signal(SIGTERM, cleanup);
+
 	// main loop
-	while(1){
+	for(; ; sleep(30)){
 		/* check if config file modified */
 		if(stat(CONFIG_FILE, &cfst) != 0){
 			// no config file, create it
@@ -508,10 +502,6 @@ int main(void)
 		/* send all data to the web server in JSON format*/
 //		sprintf(shm, "{\"id\":%d, \"sp\":%d, \"sp_st\":%d, \"temp\":%3.1f}", ++n, sp_round, sp_st, temp);
 
-		sleep(30);
 	}
-	close(fd);
-	printf("Exiting...\n");
-	return (0);
 }
 /* SDG */

@@ -39,6 +39,8 @@
 #include <sys/shm.h>
 #include <syslog.h>
 
+#include "wmrs200log.h"
+
 #define ever ;;
 #define FOXBOARD
 // record length definitions
@@ -52,23 +54,7 @@ int fd;
 FILE *fp;
 char disp[8][50];
 char *winddir[] = {"N","NNE","NE","ENE", "E", "SEE", "SE", "SSE", "S", "SSW", "SW", "SWW", "W", "NWW", "NW", "NNW"};
-struct sensor_t{
-	float temp;
-	int rh;
-	float dew;
-	char sBatt;
-};
-struct wmrs_t{
-	struct sensor_t s[2];
-	int relP;
-	int absP;
-	float wind;
-	float gust;
-	int windDir;
-	char wBatt;
-	float prec, prec1, prec24, precTot;
-	char pBatt;
-} *w;
+wmrs_t *w;
 
 // used for debug purposes
 void printBytes(unsigned char *bytes, int len)
@@ -131,6 +117,8 @@ void processRecord(unsigned char *rec)
 		w->s[sensor].sBatt = (flags >> 6) & 1;
 		sprintf((char *)&disp[2+sensor],"*Sensor%d T: %3.1f Rh: %d%% Dew: %3.1f Batt: %d", sensor, w->s[sensor].temp,
 				w->s[sensor].rh, w->s[sensor].dew, w->s[sensor].sBatt);
+
+		w->timestamp = time(NULL);
 		break;
 		}
 	case 0x46:	// pressure
@@ -142,6 +130,8 @@ void processRecord(unsigned char *rec)
 		w->absP = (rec[3]&0x0F)*256+rec[2];
 		w->relP = (rec[5]&0x0F)*256+rec[4] + 9;
 		sprintf((char *)&disp[4],"*Abs. pressure: %d, Rel. press.: %d", w->absP, w->relP);
+
+		w->timestamp = time(NULL);
 		break;
 	case 0x48:{	// wind
 		for(i = 2; i < WLEN; i++)
@@ -158,6 +148,8 @@ void processRecord(unsigned char *rec)
 //		printBytes(&rec[0], 11);
 //		printf("Wind gust: %3.1f avg: %3.1f %s Batt: %d\n", ((rec[5] & 0x0F)*256+rec[4])*0.36,
 //				((rec[5] >> 4)+(rec[6]*16))*0.36, winddir[rec[2] & 0x0F], (flags>>4));
+
+		w->timestamp = time(NULL);
 		break;
 		}
 	case 0x41:	// rain
@@ -174,6 +166,8 @@ void processRecord(unsigned char *rec)
 		sprintf((char *)&disp[6],"*Rain %3.1f last hour %3.1f last 24 hours %3.1f", w->prec, w->prec1, w->prec24);
 		sprintf((char *)&disp[7],"   Total %3.1f since %02d/%02d/%02d %02d:%02d Batt: %d", w->precTot,
 				rec[14], rec[13], rec[12], rec[11], rec[10], w->pBatt);
+
+		w->timestamp = time(NULL);
 		break;
 	}
 }
@@ -202,7 +196,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* create shared memory for WMRS communication */
-	if((shmid = shmget(1962, sizeof(struct wmrs_t), IPC_CREAT | 0666)) < 0){
+	if((shmid = shmget(1962, sizeof(wmrs_t), IPC_CREAT | 0666)) < 0){
 		syslog(LOG_ERR, "shmget: %m");
 		exit(EXIT_FAILURE);
 	}
