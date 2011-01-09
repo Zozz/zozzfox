@@ -58,6 +58,7 @@ static void cleanup(int dummy)
 
 int main(int argc, char *argv[])
 {
+	unsigned int interval = 300;	// update interval in seconds
 	const int hlen = strlen(msg);	// length of static part
 	int shmid, sd, pos;
 	FILE *fc;
@@ -70,6 +71,14 @@ int main(int argc, char *argv[])
 
     openlog(argv[0], 0, 0);
     syslog(LOG_INFO, "starting");
+
+    if(argc > 1){
+    	if(sscanf(argv[1], "%u", &interval) != 1){
+    		printf("Usage: %s [n]\n  n: update interval in seconds\n", argv[0]);
+    	    exit(EXIT_SUCCESS);
+    	}
+    	if(interval < 60) interval = 60;
+    }
 
 	/* read the station identifier */
 	if((fc = fopen("/mnt/1/statid", "r")) != NULL){
@@ -93,7 +102,7 @@ int main(int argc, char *argv[])
 
 	signal(SIGTERM, cleanup);
 
-	for(; ; sleep(600)){
+	for(; ; sleep(interval)){
 		/* connect to metnet.hu */
 		if((sd = socket(AF_INET, SOCK_STREAM, 0)) < 0){
 			syslog(LOG_ERR, "socket: %m");
