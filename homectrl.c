@@ -163,7 +163,9 @@ static void sprinkler(void)
 		}
 		break;
 	case ST_START: // start cycle
-		printf("%s %02d:%02d Sprinkler%d on", wdays[ptm->tm_wday], ptm->tm_hour, ptm->tm_min, sp_round);
+		printf("%s %02d/%02d %02d:%02d Sp%d on",
+				wdays[ptm->tm_wday], ptm->tm_mon+1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min, sp_round);
+		fflush(stdout); // really print it out
 		pulse(CH2_ON_BIT);
 		sp_st = ST_ON;
 		if(sp_round == 1) sp_last_t = t; // save last sprinkling time
