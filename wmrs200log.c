@@ -55,6 +55,7 @@ FILE *fp;
 char disp[8][50];
 char *winddir[] = {"N","NNE","NE","ENE", "E", "SEE", "SE", "SSE", "S", "SSW", "SW", "SWW", "W", "NWW", "NW", "NNW"};
 wmrs_t *w;
+time_t t;
 
 // used for debug purposes
 void printBytes(unsigned char *bytes, int len)
@@ -92,7 +93,7 @@ void processRecord(unsigned char *rec)
 		sprintf((char *)&disp[1],"   Date: %02d/%02d/%02d %02d:%02d TZ%d", rec[8], rec[7], rec[6],
 				rec[5], rec[4], rec[9]);
 		break;
-	case 0x42:{	// temp/humidity sensors
+	case 0x42:	// temp/humidity sensors
 		for(i = 2; i < TLEN; i++)
 			csum += rec[i];
 		if(csum != rec[TLEN]+rec[TLEN+1]*256)
@@ -118,9 +119,8 @@ void processRecord(unsigned char *rec)
 		sprintf((char *)&disp[2+sensor],"*Sensor%d T: %3.1f Rh: %d%% Dew: %3.1f Batt: %d", sensor, w->s[sensor].temp,
 				w->s[sensor].rh, w->s[sensor].dew, w->s[sensor].sBatt);
 
-		w->timestamp = time(NULL);
+		w->timestamp = t;
 		break;
-		}
 	case 0x46:	// pressure
 		for(i = 2; i < PLEN; i++)
 			csum += rec[i];
@@ -131,7 +131,7 @@ void processRecord(unsigned char *rec)
 		w->relP = (rec[5]&0x0F)*256+rec[4] + 9;
 		sprintf((char *)&disp[4],"*Abs. pressure: %d, Rel. press.: %d", w->absP, w->relP);
 
-		w->timestamp = time(NULL);
+		w->timestamp = t;
 		break;
 	case 0x48:{	// wind
 		for(i = 2; i < WLEN; i++)
@@ -149,7 +149,7 @@ void processRecord(unsigned char *rec)
 //		printf("Wind gust: %3.1f avg: %3.1f %s Batt: %d\n", ((rec[5] & 0x0F)*256+rec[4])*0.36,
 //				((rec[5] >> 4)+(rec[6]*16))*0.36, winddir[rec[2] & 0x0F], (flags>>4));
 
-		w->timestamp = time(NULL);
+		w->timestamp = t;
 		break;
 		}
 	case 0x41:	// rain
@@ -167,7 +167,7 @@ void processRecord(unsigned char *rec)
 		sprintf((char *)&disp[7],"   Total %3.1f since %02d/%02d/%02d %02d:%02d Batt: %d", w->precTot,
 				rec[14], rec[13], rec[12], rec[11], rec[10], w->pBatt);
 
-		w->timestamp = time(NULL);
+		w->timestamp = t;
 		break;
 	}
 }
@@ -177,7 +177,8 @@ int main(int argc, char *argv[])
 	struct usbdevfs_bulktransfer bt;
 	struct usbdevfs_ctrltransfer ct;
     unsigned char buf[10], usbRecords[100];
-    int j, usbRecordLength, shmid;
+    int j, usbRecordLength, shmid, first = 1;
+	struct tm *ptm;
 
     openlog(argv[0], 0, 0);
     syslog(LOG_INFO, "starting");
@@ -222,6 +223,25 @@ int main(int argc, char *argv[])
 
 	for(ever){	// main loop
 		sleep(1);
+		// shift historical data buffer when hour changed
+		t = time(NULL);
+		ptm = localtime(&t);
+		if(ptm->tm_min == 0){
+			if(first){
+				first = 0;
+				for(j = 0; j < 23; j++){
+					w->tHist[j] = w->tHist[j+1];
+					w->rhHist[j] = w->rhHist[j+1];
+				}
+			}
+		}
+		else{
+			first = 1;
+		}
+		// store indoor data
+		w->tHist[23] = w->s[0].temp;
+		w->rhHist[23] = w->s[0].rh;
+
 		// read reports from device
 		bt.ep = 0x81;
 		bt.len = 8;
