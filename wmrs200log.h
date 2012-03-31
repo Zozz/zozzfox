@@ -28,6 +28,8 @@ typedef struct {
 	float prec, prec1, prec24, precTot;
 	char pBatt;
 	time_t timestamp;
+	float tHist[24];
+	int rhHist[24];
 } wmrs_t;
 
 #endif /* WMRS200LOG_H_ */
