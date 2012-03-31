@@ -1,6 +1,6 @@
 /*
  * homectrl.c
- * Copyright (C) Kovács Zoltán 2008-2009 <zozz@freemail.hu>
+ * Copyright (C) Kovács Zoltán 2008-2012 <zozz@freemail.hu>
  * 
  * homectrl.c is free software.
  * 
@@ -65,6 +65,7 @@ int FLT_ON_TEMP = 30;		// min temperature to run pool filter
 int FLT_START_HOUR = 14;	// when start pool filter
 int HEAT_ENABLED = 1;
 int SP_ENABLED = 1;
+int sp_time_corr[6] = {0, 0, 0, 10 MIN, 0, 0}; // sprinkler time correction
 
 // heating programs
 //0000 0000 0000 0000 0000 0000	program bits
@@ -171,17 +172,17 @@ static void sprinkler(void)
 		if(sp_round == 1) sp_last_t = t; // save last sprinkling time
 		break;
 	case ST_ON: // wait for sprinkler time
-		if(difftime(t, saved_t) >= SP_ON_TIME){
+		if(difftime(t, saved_t) >= (SP_ON_TIME + sp_time_corr[sp_round])){
 			printf(", %02d:%02d off\n", ptm->tm_hour, ptm->tm_min);
 			pulse(CH2_OFF_BIT);
 			sp_st = ST_OFF;
-			saved_t += SP_ON_TIME;
+			saved_t = t;
 		}
 		break;
 	case ST_OFF: // wait for pause time
 		if(difftime(t, saved_t) >= SP_OFF_TIME){
 			sp_st = ++sp_round > 6 ? ST_IDLE : ST_START;
-			saved_t += SP_OFF_TIME;
+			saved_t = t;
 		}
 		break;
 	}
@@ -449,6 +450,7 @@ int main(void)
 			break;
 		default:
 			T_flag = 1;
+			break;
 		}
 
 		/* get precipitation forecast for next day */
@@ -461,6 +463,7 @@ int main(void)
 	    	break;
 		default:
 			p_flag = 1;
+			break;
 		}
 
 		/* control heating */
