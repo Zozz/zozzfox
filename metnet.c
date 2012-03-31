@@ -146,7 +146,10 @@ int main(int argc, char *argv[])
 		pos += sprintf(&msg[pos], "       <homerseklet>%5.1f</homerseklet>\r\n", w->s[1].temp);
 		pos += sprintf(&msg[pos], "       <relativlegnyomas>%4d</relativlegnyomas>\r\n", w->relP);
 		pos += sprintf(&msg[pos], "       <legnedvesseg>%3d</legnedvesseg>\r\n", w->s[1].rh);
-		pos += sprintf(&msg[pos], "       <harmatpont>%5.1f</harmatpont>\r\n", w->s[1].dew);
+		if(w->s[1].dew > 50.0) // in case of very low temp (below -10) the dew value is wrong (819.2)
+			pos += sprintf(&msg[pos], "       <harmatpont>  0.0</harmatpont>\r\n");
+		else
+			pos += sprintf(&msg[pos], "       <harmatpont>%5.1f</harmatpont>\r\n", w->s[1].dew);
 		pos += sprintf(&msg[pos], "       <szelsebesseg>%5.1f</szelsebesseg>\r\n", w->wind);
 		pos += sprintf(&msg[pos], "       <szelirany>%3d</szelirany>\r\n", w->windDir);
 		pos += sprintf(&msg[pos], "       <szellokes>%5.1f</szellokes>\r\n", w->gust);
