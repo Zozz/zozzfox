@@ -145,6 +145,14 @@ static void sprinkler(void)
 	case ST_SKIP: // skip to next day
 		if(ptm->tm_wday == saved_day) break;
 	case ST_IDLE:
+		/* forced sprinkling */
+		if(SP_ENABLED == 2 && ptm->tm_hour == SP_START_HOUR){
+			SP_ENABLED = 1; // reset to normal state
+			sp_st = ST_START;
+			saved_t = t;
+			sp_round = 1;
+			break;
+		}
 		/* delay to Saturday if possible */
 		if(sp_freq > 2 && ptm->tm_wday == 5){
 			break;
@@ -412,7 +420,6 @@ int main(void)
 		/* on every Sunday */
 		if(ptm->tm_wday == 0){
 			if(time_flag){
-				system("/mnt/1/gettime.sh");	// update system time
 				heat_prog();	// update next week program
 				time_flag = 0;
 			}
